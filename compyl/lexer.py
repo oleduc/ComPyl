@@ -1,11 +1,31 @@
 import copy
 import dill
 
-from .FiniteAutomaton.FiniteAutomaton import DFA, NodeIsNotTerminalState
+from compyl.__lexer.finite_automaton import DFA, NodeIsNotTerminalState
+from compyl.__lexer.errors import LexerError, LexerSyntaxError, LexerBuildError, RegexpParsingError
 
 
-class LexerError(Exception):
-    pass
+__all__ = ['Token', 'Lexer', 'LexerError', 'LexerSyntaxError', 'LexerBuildError', 'RegexpParsingError']
+
+
+# ======================================================================================================================
+# Lexer decorators
+# ======================================================================================================================
+
+
+def _require_dfa(fn):
+    def wrapped_fn(self, *args, **kwargs):
+        if not self.dfa:
+            raise LexerError('Must call build() first')
+        else:
+            return fn(self, *args, **kwargs)
+
+    return wrapped_fn
+
+
+# ======================================================================================================================
+# Lexer main classes
+# ======================================================================================================================
 
 
 class Token:
@@ -107,8 +127,8 @@ class Lexer:
 
             def increment_pos(*args):
                 increment = args[0] if args else 1
-                master.lineno += increment
-                self.lineno += increment
+                master.pos += increment
+                self.pos += increment
 
             self.increment_line = increment_line
             self.increment_pos = increment_pos
@@ -237,7 +257,7 @@ class Lexer:
                     the string can take values 'always', 'only_ignored' or 'only_tokens'""")
 
     def build(self):
-        self.dfa = DFA(self.rules)
+        self.dfa = DFA(rules=self.rules)
 
     def save(self, filename="lexer.p"):
         with open(filename, "wb") as file:
@@ -258,6 +278,7 @@ class Lexer:
         else:
             raise LexerError("The unpickled object from " + path + " is not a Lexer")
 
+    @_require_dfa
     def lex(self):
         try:
             _ = self.buffer[self.pos]
@@ -300,7 +321,7 @@ class Lexer:
                 try:
                     terminal_token = self.dfa.get_current_state_terminal()
                 except NodeIsNotTerminalState:
-                    raise LexerError("Syntax error at line %s" % self.lineno)
+                    raise LexerSyntaxError("Syntax error at line %s" % self.lineno)
 
                 break
 

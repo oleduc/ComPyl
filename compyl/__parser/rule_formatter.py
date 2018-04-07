@@ -1,39 +1,19 @@
 import copy
-import dill
 import re
 
+from compyl.__parser.grammar_error import ReduceCycle
+from compyl.__parser.error import GrammarError
 
-class ParserException(Exception):
-    pass
 
-
-class Parser:
-    def __init__(self, lexer=None, rules=None):
-        self.lexer = None
-        self.rules = {}
-
-        if rules:
-            self.add_rules(rules)
-
-        if lexer:
-            self.lexer = copy.copy(lexer)
-
-    def add_rules(self, rules):
-        pass
-
-    def build(self):
-        pass
-
-    def save(self, filename="parser.p"):
-        with open(filename, "wb") as file:
-            dill.dump(self, file)
-
-    def parse(self):
-        pass
-
-# ======================================================================================================================
-# Rule formatting
-# ======================================================================================================================
+def rules_are_valid(rules):
+    for _, rule in rules.items():
+        if not isinstance(rule, (list, tuple)):
+            return False
+        else:
+            for el in rule:
+                if not isinstance(el, (list, tuple)):
+                    return False
+    return True
 
 
 def format_rules(rules):
@@ -60,7 +40,55 @@ def format_rules(rules):
         for rule in token_rules:
             formatted_rules[token].extend(parse_rule(rule))
 
-    return formatted_rules
+    reduce_cycles = get_reduce_cycles(formatted_rules)
+
+    if reduce_cycles:
+        reduce_cycles = [ReduceCycle(c) for c in reduce_cycles]
+        raise GrammarError(reduce_cycles=reduce_cycles)
+
+    else:
+        return formatted_rules
+
+
+def get_reduce_cycles(formatted_rules):
+    formatted_rules = copy.deepcopy(formatted_rules)
+    one_to_one_chains = []
+    cycles = []
+
+    for reduce_token, rules in formatted_rules.items():
+        for rule, _ in rules:
+            if len(rule) == 1:
+                if reduce_token == rule[0]:
+                    cycles.append((reduce_token, rule[0]))
+                else:
+                    one_to_one_chains.append((reduce_token, rule[0]))
+
+    one_to_one_chains = list(set(one_to_one_chains))
+
+    # Sorting makes the following behavior deterministic
+    one_to_one_chains.sort()
+
+    while one_to_one_chains:
+        chain = one_to_one_chains.pop()
+        new_chains = []
+
+        for next_chain in one_to_one_chains:
+
+            if chain[-1] == next_chain[0] and chain[0] == next_chain[-1]:
+                cycles.append(chain + next_chain[1:])
+
+            elif chain[0] == next_chain[-1]:
+                # Note: It is important that chaining is inspected toward the reduction
+                # This way we might miss chains, but only when there are reduce/reduce conflicts
+                new_chain = next_chain[:-1] + chain
+                new_chains.append(new_chain)
+
+            else:
+                new_chains.append(next_chain)
+
+        one_to_one_chains = new_chains
+
+    return cycles
 
 
 def append_many(lists, element, at_sub_pos=None):
@@ -86,7 +114,7 @@ def parse_rule(rule):
 
     for pos, token in enumerate(token_list):
         if not is_token_valid(token):
-            raise ParserException('Parser only accepts token composed of letters, numbers and underscores')
+            raise ValueError('Parser only accepts token composed of letters, numbers and underscores')
 
         if token[-1] == "?":
             token = token[:-1]
@@ -114,7 +142,7 @@ def spread_arguments_with_none(sorted_none_pos, fn):
     :return: A new function that takes len(sorted_none_pos) more argument than fn, but which arguments at positions
              in sorted_none_pos are expected to be None
     """
-    return lambda *args: fn(*insert_none_at_positions(sorted_none_pos, args)) if sorted_none_pos else fn
+    return (lambda *args: fn(*insert_none_at_positions(sorted_none_pos, args))) if sorted_none_pos else fn
 
 
 def insert_none_at_positions(sorted_pos_list, list):
